@@ -2,11 +2,12 @@
 'use strict';
 const { SECTIONS, BANK, BYID, MAX_Q, MAX_PROBES } = window.Shared;
 const API = (window.CBP_API || '').replace(/\/$/, '');
+const DEBUG = /[?&]debug=1(&|$)/.test(location.search);
 const EXCL = /^(none|neither|not sure|i am not familiar|i do not know|not familiar|no preference|nothing)/i;
 
 /* ---------- State ---------- */
 const S = { view: 'intro', mode: 'adaptive', answers: [], covered: new Set(), current: null, draft: null, lead: '', notice: '',
-  probes: 0, lastS: 0, rid: null, completed: false, saveState: 'idle', ctl: null };
+  probes: 0, lastS: 0, rid: null, completed: false, saveState: 'idle', ctl: null, failures: [] };
 let saveChain = Promise.resolve();
 
 /* ---------- DOM helper ---------- */
@@ -31,15 +32,20 @@ const $ = id => document.getElementById(id);
 /* ---------- Helpers ---------- */
 const pending = () => BANK.filter(b => !S.covered.has(b.id));
 function answerFor(id) { return S.answers.find(a => a.covers.includes(id)); }
+function val(id) { const x = answerFor(id); return x ? x.value : null; }
 function unaware() {
-  const a4 = answerFor('q4');
-  if (a4 && Array.isArray(a4.value) && !a4.value.includes('Renault')) return true;
-  const a5 = answerFor('q5');
-  return !!(a5 && Array.isArray(a5.value) && a5.value.includes('I am not familiar with Renault'));
+  const a4 = val('q4');
+  if (Array.isArray(a4) && !a4.includes('Renault')) return true;
+  const a5 = val('q5');
+  return !!(Array.isArray(a5) && a5.includes('I am not familiar with Renault'));
 }
+function ownsCar() { const v = val('q1'); return v === 'I currently own a car' || v === 'Both'; }
+function notInMarket() { return val('q1') === 'Neither' || val('q15') === 'Not planning to buy a car'; }
 function staticSkip(b) {
-  if (b.id === 'q5') return !!answerFor('q4') && !answerFor('q4').value.includes('Renault');
-  if (['q6', 'q7', 'q11', 'q12'].includes(b.id)) return unaware();
+  if (b.id === 'q5') { const a4 = val('q4'); return Array.isArray(a4) && !a4.includes('Renault'); }
+  if (['q6', 'q7', 'q11', 'q12', 'q21'].includes(b.id)) return unaware();
+  if (['q15', 'q2', 'q17', 'q24'].includes(b.id)) return notInMarket();
+  if (b.id === 'q18') return !ownsCar();
   return false;
 }
 function staticNext() {
@@ -48,6 +54,12 @@ function staticNext() {
     return { ...b, covers: [b.id] };
   }
   return null;
+}
+function shuffled(opts) {
+  const body = [], tail = [];
+  opts.forEach(o => (EXCL.test(o) ? tail : body).push(o));
+  for (let i = body.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [body[i], body[j]] = [body[j], body[i]]; }
+  return body.concat(tail);
 }
 function newDraft(q) { return { sel: q.type === 'multi' ? [] : null, other: '', scale: null, grid: {}, text: '', note: '' }; }
 function otherText(d) { return 'Other: ' + (d.other.trim() || 'unspecified'); }
@@ -78,6 +90,7 @@ function readAnswer(q, d) {
 function queueSave() {
   const payload = {
     rid: S.rid, completed: S.completed, mode: S.mode,
+    debug: { origin: location.origin, api: API || '(same site)', ua: (navigator.userAgent || '').slice(0, 160), failures: S.failures.slice(0, 10) },
     answers: S.answers.map(a => ({ id: a.id, covers: a.covers, question: a.question, type: a.type, answer: a.display, note: a.note || '' }))
   };
   S.saveState = 'saving';
@@ -94,7 +107,7 @@ function saveText() {
 /* ---------- Flow ---------- */
 function start() {
   S.mode = 'adaptive'; S.notice = '';
-  S.answers = []; S.covered = new Set(); S.probes = 0; S.lastS = 0; S.completed = false; S.lead = ''; S.saveState = 'idle';
+  S.answers = []; S.failures = []; S.covered = new Set(); S.probes = 0; S.lastS = 0; S.completed = false; S.lead = ''; S.saveState = 'idle';
   S.rid = 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   S.current = { ...BYID.q1, covers: ['q1'] }; S.draft = newDraft(S.current); S.view = 'question'; render(); window.scrollTo(0, 0);
 }
@@ -109,6 +122,7 @@ function onNext() {
 }
 function finish() { S.completed = true; S.view = 'end'; queueSave(); render(); window.scrollTo(0, 0); }
 function show(q, lead) {
+  if (q.shuffle && q.options) q.options = shuffled(q.options);
   q.s = q.covers && q.covers.length ? BYID[q.covers[0]].s : S.lastS;
   S.current = q; S.draft = newDraft(q); S.lead = lead || ''; S.view = 'question'; render(); window.scrollTo(0, 0);
 }
@@ -120,8 +134,19 @@ async function askServer(signal) {
       answers: S.answers.map(a => ({ id: a.id, question: a.question, display: a.display, note: a.note }))
     })
   });
-  if (!res.ok) { const e = new Error('http ' + res.status); e.status = res.status; throw e; }
+  if (!res.ok) {
+    let j = {}; try { j = await res.json(); } catch (x) { /* ignore */ }
+    const e = new Error('http ' + res.status);
+    e.http = res.status; e.code = j.error || ('http_' + res.status); e.upstream = j.status || 0; e.detail = j.detail || '';
+    throw e;
+  }
   return res.json();
+}
+function noteFail(f) {
+  S.failures.push({ n: S.answers.length + 1, kind: f.kind, code: f.code || '', status: f.status || 0, detail: String(f.detail || '').slice(0, 400) });
+}
+function debugLine(f) {
+  return DEBUG ? ' [debug] ' + [f.code, f.status || '', f.detail].filter(Boolean).join(' · ') : '';
 }
 async function advance() {
   if (!pending().length || S.answers.length >= MAX_Q) { finish(); return; }
@@ -134,6 +159,7 @@ async function advance() {
     clearTimeout(slow); S.ctl = null;
     if (Array.isArray(r.skip)) r.skip.forEach(id => { if (BYID[id]) S.covered.add(id); });
     if (!pending().length) { finish(); return; }
+    if (!r.done && !r.question) { noteFail({ kind: 'rejected', code: 'question_rejected', detail: r.raw || 'Claude answered, but the question could not be used' }); queueSave(); if (DEBUG) S.notice = 'Debug: Claude answered, but the question was rejected. ' + (r.raw || ''); }
     let q = (!r.done && r.question) ? r.question : null;
     if (q) q.covers = (q.covers || []).filter(id => !S.covered.has(id));
     if (q && !q.covers.length && S.probes >= MAX_PROBES) q = null;
@@ -142,8 +168,13 @@ async function advance() {
   } catch (e) {
     clearTimeout(slow); S.ctl = null;
     S.mode = 'standard';
-    S.notice = e && e.name === 'AbortError' ? 'You chose the standard questions for the rest of the survey.'
-      : 'The next question could not be written, so the rest of the survey follows the standard set.';
+    let f;
+    if (e && e.name === 'AbortError') f = { kind: 'skipped', code: 'user_skipped', detail: 'The respondent chose to continue with the standard questions' };
+    else if (e && e.http) f = { kind: 'server', code: e.code, status: e.upstream || e.http, detail: e.detail };
+    else f = { kind: 'network', code: 'network', detail: 'The browser could not reach ' + (API || 'the server') + ' from ' + location.origin + (e && e.message ? ' (' + e.message + ')' : '') };
+    noteFail(f); queueSave();
+    S.notice = (f.code === 'user_skipped' ? 'You chose the standard questions for the rest of the survey.'
+      : 'The next question could not be written, so the rest of the survey follows the standard set.') + debugLine(f);
     const q = staticNext(); if (!q) { finish(); return; } show(q, '');
   }
 }
@@ -170,7 +201,7 @@ function render() {
 }
 function renderIntro(v) {
   v.append(h('section', { class: 'card' },
-    h('p', { class: 'kicker' }, 'Interview · about 5 minutes'),
+    h('p', { class: 'kicker' }, 'Interview · 5 to 7 minutes'),
     h('h1', null, 'How do you see cars in India?'),
     h('p', null, 'This short interview is about the cars and car brands you know and what you look for in your next one.'),
     h('p', null, 'The questions change as you answer. Each reply shapes the next question. You can add a comment under any question to steer what comes next.'),

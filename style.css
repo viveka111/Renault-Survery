@@ -36,7 +36,7 @@ header.top{display:flex;align-items:center;justify-content:space-between;gap:12p
 :focus-visible{outline:3px solid var(--signal);outline-offset:2px}
 
 .route{display:flex;flex-direction:column;gap:6px}
-.segs{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.segs{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:4px}
 .seg{height:8px;background:var(--line);position:relative;overflow:hidden;border-radius:2px}
 .seg i{position:absolute;inset:0 auto 0 0;background:var(--signal);width:0;transition:width .35s ease}
 .seg.cur{outline:2px solid var(--ink);outline-offset:1px}
@@ -113,3 +113,13 @@ details.resp summary{cursor:pointer;font-size:.9rem;display:flex;gap:8px;justify
 details.resp .sum{margin-top:12px}
 .insight{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.95rem;line-height:1.55}
 footer{font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;color:var(--muted);text-transform:uppercase}
+
+.dbg{border:1px solid var(--line);border-left:4px solid var(--signal);border-radius:8px;padding:12px 14px;background:var(--bg);display:flex;flex-direction:column;gap:8px;margin-block:8px;min-width:0}
+.dbgitem{display:flex;flex-direction:column;gap:4px;padding-top:8px;border-top:1px solid var(--line)}
+.dbgitem:first-of-type{border-top:0;padding-top:0}
+.dbg .a{font-weight:600}
+.dbg .c{font-size:.85rem;color:var(--muted);overflow-wrap:anywhere}
+.detail{margin:0;padding:8px 10px;border:1px solid var(--line);border-radius:6px;font-family:var(--mono);font-size:.78rem;white-space:pre-wrap;overflow-wrap:anywhere;background:var(--surface)}
+.okc{color:var(--select)}
+.badc{color:var(--err)}
+details.resp.warn{border-left:4px solid var(--signal)}
