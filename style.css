@@ -127,3 +127,5 @@ details.resp.warn{border-left:4px solid var(--signal)}
 details.tech{font-size:.85rem;color:var(--muted)}
 details.tech summary{cursor:pointer}
 details.tech .detail{margin-top:6px}
+/* contact step */
+.opt.on{border-color:var(--ink)}

@@ -79,10 +79,10 @@ async function summarize() {
   catch (e) { msg = 'Could not write the summary. Run "Test AI connection" to see why.'; }
   busy = false; render();
 }
-async function exportCsv() {
+async function exportCsv(path, name) {
   try {
-    const blob = await (await api('/api/admin/export.csv')).blob();
-    const a = h('a', { href: URL.createObjectURL(blob), download: 'car-brand-pulse.csv' });
+    const blob = await (await api(path || '/api/admin/export.csv')).blob();
+    const a = h('a', { href: URL.createObjectURL(blob), download: name || 'car-brand-pulse.csv' });
     document.body.append(a); a.click(); a.remove();
   } catch (e) { msg = 'Could not export.'; render(); }
 }
@@ -128,11 +128,14 @@ function render() {
     h('div', { class: 'stats' },
       h('div', { class: 'stat' }, h('b', null, String(data.length)), 'started'),
       h('div', { class: 'stat' }, h('b', null, String(done)), 'finished'),
-      h('div', { class: 'stat' }, h('b', null, String(failed)), 'AI fell back')),
+      h('div', { class: 'stat' }, h('b', null, String(failed)), 'AI fell back'),
+      h('div', { class: 'stat' }, h('b', null, String(data.filter(x => x.email).length)), 'gave an email'),
+      h('div', { class: 'stat' }, h('b', null, String(data.filter(x => x.consent && x.email).length)), 'may be contacted')),
     h('div', { class: 'actions' },
       h('button', { class: 'ghost', type: 'button', onclick: load }, 'Refresh'),
       h('button', { class: 'ghost', type: 'button', disabled: diagBusy, onclick: runDiagnose }, 'Test AI connection'),
-      h('button', { class: 'ghost', type: 'button', disabled: !data.length, onclick: exportCsv }, 'Export CSV'),
+      h('button', { class: 'ghost', type: 'button', disabled: !data.length, onclick: () => exportCsv() }, 'Export CSV'),
+      h('button', { class: 'ghost', type: 'button', disabled: !data.some(x => x.consent && x.email), onclick: () => exportCsv('/api/admin/contacts.csv', 'car-brand-pulse-contacts.csv') }, 'Export contacts'),
       h('button', { class: 'primary', type: 'button', disabled: busy || !data.length, onclick: summarize }, busy ? 'Writing…' : 'Summarise with Claude')),
     diagBox(),
     msg ? h('p', { class: 'notice' }, msg) : null,
@@ -142,7 +145,7 @@ function render() {
       const bad = x.debug && x.debug.failures && x.debug.failures.length;
       return h('details', { class: 'resp' + (bad ? ' warn' : '') },
         h('summary', null, h('span', null, new Date(x.startedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })),
-          h('span', { class: 'c' }, (x.completed ? 'Finished' : 'Incomplete') + ' · ' + x.answers.length + ' answers · ' + x.mode + (bad ? ' · AI fell back' : ''))),
+          h('span', { class: 'c' }, (x.completed ? 'Finished' : 'Incomplete') + ' · ' + x.answers.length + ' answers · ' + x.mode + (x.email ? ' · ' + x.email : '') + (bad ? ' · AI fell back' : ''))),
         failureBox(x),
         h('ul', { class: 'sum' }, x.answers.map(a => h('li', null,
           h('span', { class: 'c' }, (a.id === 'probe' ? 'Follow-up: ' : '') + a.question), h('span', { class: 'a' }, a.answer), a.note ? h('span', { class: 'c' }, 'Comment: ' + a.note) : null))));

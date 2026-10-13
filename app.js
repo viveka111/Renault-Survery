@@ -7,7 +7,8 @@ const EXCL = /^(none|neither|not sure|i am not familiar|i do not know|not famili
 
 /* ---------- State ---------- */
 const S = { view: 'intro', mode: 'adaptive', answers: [], covered: new Set(), current: null, draft: null, lead: '', notice: '',
-  probes: 0, lastS: 0, rid: null, completed: false, saveState: 'idle', ctl: null, failures: [] };
+  probes: 0, lastS: 0, rid: null, completed: false, saveState: 'idle', ctl: null, failures: [], contact: { email: '', consent: false }, contactSaved: false };
+const validEmail = e => /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/.test(e) && e.length <= 254;
 let saveChain = Promise.resolve();
 
 /* ---------- DOM helper ---------- */
@@ -90,6 +91,7 @@ function readAnswer(q, d) {
 function queueSave() {
   const payload = {
     rid: S.rid, completed: S.completed, mode: S.mode,
+    contact: S.contactSaved ? { email: S.contact.email, consent: S.contact.consent } : { email: '', consent: false },
     debug: { origin: location.origin, api: API || '(same site)', ua: (navigator.userAgent || '').slice(0, 160), failures: S.failures.slice(0, 10) },
     answers: S.answers.map(a => ({ id: a.id, covers: a.covers, question: a.question, type: a.type, answer: a.display, note: a.note || '' }))
   };
@@ -107,7 +109,7 @@ function saveText() {
 /* ---------- Flow ---------- */
 function start() {
   S.mode = 'adaptive'; S.notice = '';
-  S.answers = []; S.failures = []; S.covered = new Set(); S.probes = 0; S.lastS = 0; S.completed = false; S.lead = ''; S.saveState = 'idle';
+  S.answers = []; S.failures = []; S.covered = new Set(); S.probes = 0; S.lastS = 0; S.completed = false; S.lead = ''; S.saveState = 'idle'; S.contact = { email: '', consent: false }; S.contactSaved = false;
   S.rid = 'r_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   S.current = { ...BYID.q1, covers: ['q1'] }; S.draft = newDraft(S.current); S.view = 'question'; render(); window.scrollTo(0, 0);
 }
@@ -120,7 +122,8 @@ function onNext() {
   queueSave();
   advance();
 }
-function finish() { S.completed = true; S.view = 'end'; queueSave(); render(); window.scrollTo(0, 0); }
+function finish() { S.view = 'contact'; queueSave(); render(); window.scrollTo(0, 0); }
+function toEnd() { S.view = 'end'; render(); window.scrollTo(0, 0); }
 function show(q, lead) {
   if (q.shuffle && q.options) q.options = shuffled(q.options);
   q.s = q.covers && q.covers.length ? BYID[q.covers[0]].s : S.lastS;
@@ -186,22 +189,23 @@ async function advance() {
 
 /* ---------- Rendering ---------- */
 function renderRoute() {
-  const on = ['question', 'loading', 'end'].includes(S.view);
+  const on = ['question', 'loading', 'contact', 'end'].includes(S.view);
+  const done = S.view === 'end' || S.view === 'contact';
   $('route').hidden = !on; if (!on) return;
   const segs = $('segs'); segs.textContent = '';
-  const curS = S.view === 'question' && S.current ? S.current.s : (S.view === 'end' ? -1 : S.lastS);
+  const curS = S.view === 'question' && S.current ? S.current.s : (done ? -1 : S.lastS);
   SECTIONS.forEach((n, i) => {
     const items = BANK.filter(b => b.s === i), res = items.filter(b => S.covered.has(b.id)).length;
     segs.append(h('div', { class: 'seg' + (i === curS ? ' cur' : ''), title: n }, h('i', { style: 'width:' + Math.round(res / items.length * 100) + '%' })));
   });
-  $('seclabel').textContent = S.view === 'end' ? 'Complete' : SECTIONS[Math.max(curS, 0)];
-  $('countlabel').textContent = S.view === 'end' ? '' : 'Question ' + (S.answers.length + (S.view === 'question' ? 1 : 0));
+  $('seclabel').textContent = done ? 'Complete' : SECTIONS[Math.max(curS, 0)];
+  $('countlabel').textContent = done ? '' : 'Question ' + (S.answers.length + (S.view === 'question' ? 1 : 0));
 }
 function render() {
   renderRoute();
   const v = $('view'); v.textContent = '';
   v.style.animation = 'none'; void v.offsetWidth; v.style.animation = '';
-  ({ intro: renderIntro, question: renderQuestion, loading: renderLoading, end: renderEnd }[S.view])(v);
+  ({ intro: renderIntro, question: renderQuestion, loading: renderLoading, contact: renderContact, end: renderEnd }[S.view])(v);
   $('foot').textContent = S.view === 'intro' ? '' : (S.mode === 'adaptive' ? 'Questions written live from your answers' : 'Standard question set');
 }
 function renderIntro(v) {
@@ -210,6 +214,7 @@ function renderIntro(v) {
     h('h1', null, 'How do you see cars in India?'),
     h('p', null, 'This short interview is about the cars and car brands you know and what you look for in your next one.'),
     h('p', null, 'The questions change as you answer. Each reply shapes the next question. You can add a comment under any question to steer what comes next.'),
+    h('p', { class: 'hint' }, 'At the end we ask for your email address, so we can match your answers to you. You choose separately whether we may contact you.'),
     h('div', { class: 'actions' }, h('button', { class: 'primary', id: 'startbtn', type: 'button', onclick: start }, 'Start'))
   ));
 }
@@ -301,12 +306,41 @@ function renderQuestion(v) {
   ));
   upd();
 }
+function renderContact(v) {
+  const c = S.contact;
+  const email = h('input', { class: 'field', id: 'c-email', type: 'email', inputmode: 'email', autocomplete: 'email', maxlength: '254', placeholder: 'name@example.com', 'aria-label': 'Email address' });
+  email.value = c.email;
+  const box = h('input', { type: 'checkbox', id: 'c-consent', name: 'consent' });
+  box.checked = c.consent;
+  const row = h('label', { class: 'opt', for: 'c-consent' }, box, h('span', { class: 'mark', 'aria-hidden': 'true' }),
+    h('span', { class: 'txt' }, 'You may also contact me at this address about this research (optional).'));
+  const save = h('button', { class: 'primary', id: 'c-save', type: 'button', onclick: () => {
+    S.contact = { email: email.value.trim(), consent: box.checked }; S.contactSaved = true; S.completed = true; queueSave(); toEnd();
+  } }, 'Finish');
+  const err = h('p', { class: 'hint', id: 'c-hint' });
+  const upd = () => {
+    const e = email.value.trim(), ok = validEmail(e);
+    save.disabled = !ok; row.classList.toggle('on', box.checked);
+    err.textContent = e && !ok ? 'That email address does not look complete.' : '';
+  };
+  email.addEventListener('input', upd); box.addEventListener('change', upd);
+  v.append(h('section', { class: 'card' },
+    h('p', { class: 'kicker' }, 'Last step'),
+    h('h1', null, 'Your email address'),
+    h('p', null, 'Please enter your email to finish. It is stored separately from your answers and is never shown with them. We contact you only if you tick the box below.'),
+    h('label', { class: 'q', for: 'c-email', style: 'font-size:1rem;font-weight:600' }, 'Email address (required)'), email,
+    h('div', { class: 'opts multi', style: 'margin-top:12px' }, row), err,
+    h('div', { class: 'actions' }, save)
+  ));
+  upd();
+}
 function renderEnd(v) {
   v.append(h('section', { class: 'card' },
     h('p', { class: 'kicker' }, 'Complete · ' + S.answers.length + ' questions'),
     h('h1', null, 'Thank you'),
     h('p', null, S.mode === 'adaptive' ? 'Your answers shaped which questions you saw. Here is what you told us.' : 'Here is what you told us.'),
     h('p', { class: 'hint', id: 'savestate' }, saveText()),
+    S.contactSaved ? h('p', { class: 'hint' }, S.contact.consent ? 'We have your email and may contact you about this research.' : 'We have your email. We will not contact you.') : null,
     h('ul', { class: 'sum' }, S.answers.map(a => h('li', null, h('span', { class: 'c' }, a.question), h('span', { class: 'a' }, a.display), a.note ? h('span', { class: 'c' }, 'Your comment: ' + a.note) : null))),
     h('div', { class: 'actions' }, h('button', { class: 'ghost', type: 'button', onclick: () => { S.view = 'intro'; render(); } }, 'Start over'))
   ));
