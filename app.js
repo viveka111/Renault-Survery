@@ -142,6 +142,11 @@ async function askServer(signal) {
   }
   return res.json();
 }
+function techText() {
+  const f = S.failures[S.failures.length - 1] || {};
+  return ['Reason: ' + (f.code || f.kind || 'unknown'), f.status ? 'Status: ' + f.status : '', f.detail ? 'Message: ' + f.detail : '',
+    'Survey page: ' + location.origin, 'Worker: ' + (API || '(same site)')].filter(Boolean).join('\n');
+}
 function noteFail(f) {
   S.failures.push({ n: S.answers.length + 1, kind: f.kind, code: f.code || '', status: f.status || 0, detail: String(f.detail || '').slice(0, 400) });
 }
@@ -291,6 +296,7 @@ function renderQuestion(v) {
     body,
     noteBtn, noteBox,
     S.notice ? h('p', { class: 'notice' }, S.notice) : null,
+    (S.failures.length && S.mode === 'standard') ? h('details', { class: 'tech' }, h('summary', null, 'Technical details'), h('pre', { class: 'detail' }, techText())) : null,
     h('div', { class: 'actions' }, nextBtn)
   ));
   upd();
